@@ -1,0 +1,128 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: trader-postgres
+    environment:
+      POSTGRES_DB: trader
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: trader_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - trader-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: trader-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - trader-network
+
+  deriv-gateway:
+    build:
+      context: ./services/deriv-gateway
+      dockerfile: Dockerfile
+    container_name: trader-deriv-gateway
+    environment:
+      DATABASE_URL: postgresql://trader:trader_password@postgres:5432/trader
+      REDIS_URL: redis://redis:6379
+      DERIV_APP_ID: 1089
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key}
+    ports:
+      - "3001:3001"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - trader-network
+
+  strategy-engine:
+    build:
+      context: ./services/strategy-engine
+      dockerfile: Dockerfile
+    container_name: trader-strategy-engine
+    environment:
+      DATABASE_URL: postgresql://trader:trader_password@postgres:5432/trader
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3002:3002"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - trader-network
+
+  ai-engine:
+    build:
+      context: ./services/ai-engine
+      dockerfile: Dockerfile
+    container_name: trader-ai-engine
+    environment:
+      DATABASE_URL: postgresql://trader:trader_password@postgres:5432/trader
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3003:3003"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - trader-network
+
+  web-dashboard:
+    build:
+      context: ./apps/web-dashboard
+      dockerfile: Dockerfile
+    container_name: trader-web-dashboard
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+    depends_on:
+      - deriv-gateway
+    networks:
+      - trader-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: trader-prometheus
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    networks:
+      - trader-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: trader-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3100:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - trader-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  trader-network:
+    driver: bridge
